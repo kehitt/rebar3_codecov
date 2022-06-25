@@ -46,6 +46,7 @@ do(State) ->
                              rebar_dir:make_relative_path(EBin, rebar_dir:root_dir(State))
                          end, AppsInfo),
     code:add_paths(Defaults),
+    _ = put(ebins_relative, Defaults),
     Files = lists:flatmap(fun get_coverdata_files/1, AppsInfo),
     Data = analyze(Files),
     export(Data, State),
@@ -123,20 +124,21 @@ module_to_lcov(Module, CallsPerLineArray, LCovFile) ->
     LCovFile.
 
 get_source_path(Module) when is_atom(Module) ->
-    Name = atom_to_list(Module)++".erl",
-    try filelib:wildcard([filename:join(["src/**/", Name])]) of
-        [P] -> P;
+    get_source_path(get(ebins_relative), Module).
+
+get_source_path([EbinDir | RDirs], M) ->
+    Beam = io_lib:format("~s/~s.beam", [EbinDir, M]),
+    case beam_lib:chunks(Beam, [compile_info]) of
+        {ok, {M, [{compile_info, CompileInfo}]}} ->
+            case proplists:get_value(source, CompileInfo) of
+                undefined -> false;
+                Path -> Path
+            end;
         _ ->
-            Issue = io_lib:format("Failed to calculate the source path of module ~p~n", [Module]),
-            rebar_api:warn("~s~n", [Issue]),
-            []
-    catch
-        Error:Reason:Stacktrace ->
-            Issue = io_lib:format("Failed to calculate the source path of module ~p~n
-                                     falling back to ~s", [Module, Name]),
-            rebar_api:warn("~s~n~p~n~p~n~p~n", [Issue, Error, Reason, Stacktrace]),
-            Name
-    end.
+            get_source_path(RDirs, M)
+    end;
+get_source_path(_, _) ->
+    false.
 
 add_profile_ebin_path(App, State) ->
     ProfileDir = rebar_dir:profile_dir(rebar_state:opts(State), [default, test]),
